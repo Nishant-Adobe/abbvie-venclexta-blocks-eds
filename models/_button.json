@@ -37,6 +37,7 @@
         {
           "component": "select",
           "name": "linkType",
+          "valueType": "string",
           "label": "Type",
           "options": [
             {
@@ -50,6 +51,10 @@
             {
               "name": "secondary",
               "value": "secondary"
+            },
+            {
+              "name": "external",
+              "value": "link-external"
             }
           ]
         }

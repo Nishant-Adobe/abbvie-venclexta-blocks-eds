@@ -1,6 +1,8 @@
+import { showSlide } from '../blocks/carousel/carousel.js';
 import {
   decorateBlock,
   decorateBlocks,
+  decorateButtons,
   decorateIcons,
   decorateSections,
   loadBlock,
@@ -8,13 +10,45 @@ import {
   loadSections,
 } from './aem.js';
 import { decorateRichtext } from './editor-support-rte.js';
-import { decorateButtons, decorateMain } from './scripts.js';
+import { decorateMain, decorateSectionBackgrounds } from './scripts.js';
 
-let promiseChanges$ = Promise.resolve();
+function getState(block) {
+  if (block.matches('.accordion')) {
+    return [...block.querySelectorAll('details[open]')].map(
+      (details) => details.dataset.aueResource,
+    );
+  }
+  if (block.matches('.carousel')) {
+    return block.dataset.activeSlide;
+  }
+  if (block.matches('.tabs')) {
+    const [currentPanel] = block.querySelectorAll('.tabs-panel[aria-hidden="false"]');
+    return currentPanel?.dataset.aueResource;
+  }
+
+  return null;
+}
+
+function setState(block, state) {
+  if (block.matches('.accordion')) {
+    block.querySelectorAll('details').forEach((details) => {
+      details.open = state.includes(details.dataset.aueResource);
+    });
+  }
+  if (block.matches('.carousel')) {
+    block.style.display = null;
+    showSlide(block, state, 'instant');
+  }
+  if (block.matches('.tabs')) {
+    const tabs = [...block.querySelectorAll('.tabs-panel')];
+    const index = tabs.findIndex((tab) => tab.dataset.aueResource === state);
+    if (index !== -1) {
+      block.querySelectorAll('.tabs-list button')[index]?.click();
+    }
+  }
+}
 
 async function applyChanges(event) {
-  await promiseChanges$;
-
   // redecorate default content and blocks on patches (in the properties rail)
   const { detail } = event;
 
@@ -37,7 +71,6 @@ async function applyChanges(event) {
   if (element) {
     if (element.matches('main')) {
       const newMain = parsedUpdate.querySelector(`[data-aue-resource="${resource}"]`);
-      if (!newMain) return false;
       newMain.style.display = 'none';
       element.insertAdjacentElement('afterend', newMain);
       decorateMain(newMain);
@@ -46,12 +79,13 @@ async function applyChanges(event) {
       element.remove();
       newMain.style.display = null;
       // eslint-disable-next-line no-use-before-define
-      attachEventListeners(newMain);
+      attachEventListners(newMain);
       return true;
     }
 
     const block = element.parentElement?.closest('.block[data-aue-resource]') || element?.closest('.block[data-aue-resource]');
     if (block) {
+      const state = getState(block);
       const blockResource = block.getAttribute('data-aue-resource');
       const newBlock = parsedUpdate.querySelector(`[data-aue-resource="${blockResource}"]`);
       if (newBlock) {
@@ -63,6 +97,7 @@ async function applyChanges(event) {
         decorateRichtext(newBlock);
         await loadBlock(newBlock);
         block.remove();
+        setState(newBlock, state);
         newBlock.style.display = null;
         return true;
       }
@@ -79,6 +114,7 @@ async function applyChanges(event) {
           decorateIcons(newSection);
           decorateRichtext(newSection);
           decorateSections(parentElement);
+          decorateSectionBackgrounds(parentElement);
           decorateBlocks(parentElement);
           await loadSections(parentElement);
           element.remove();
@@ -88,6 +124,7 @@ async function applyChanges(event) {
           decorateButtons(parentElement);
           decorateIcons(parentElement);
           decorateRichtext(parentElement);
+          decorateSectionBackgrounds(parentElement.closest('main') || parentElement);
         }
         return true;
       }
@@ -97,7 +134,50 @@ async function applyChanges(event) {
   return false;
 }
 
-function attachEventListeners(main) {
+function handleSelection(event) {
+  const { detail } = event;
+  const resource = detail?.resource;
+
+  if (resource) {
+    const element = document.querySelector(`[data-aue-resource="${resource}"]`);
+    const block = element.parentElement?.closest('.block[data-aue-resource]')
+      || element?.closest('.block[data-aue-resource]');
+
+    if (block && block.matches('.accordion')) {
+      // close all details
+      const details = element.matches('details') ? element : element.querySelector('details');
+      setState(block, [details.dataset.aueResource]);
+    }
+
+    if (block && block.matches('.carousel')) {
+      const slideIndex = [...block.querySelectorAll('.carousel-slide')].findIndex((slide) => slide === element);
+      setState(block, slideIndex);
+    }
+
+    if (block && block.matches('.tabs')) {
+      setState(block, element.dataset.aueResource);
+    }
+  }
+}
+
+/**
+ * Updates the AEM Universal Editor label on each grid-section to show
+ * the selected column count (e.g. "Grid: 3 Columns"), so authors can
+ * identify sections at a glance in the content tree and on-canvas.
+ * @param {Element} [scope=document] Root element to search within
+ */
+function showGridColumnLabel(scope = document) {
+  scope.querySelectorAll('.section[class*="grid-cols-"]').forEach((section) => {
+    const match = [...section.classList].find((c) => /^grid-cols-\d+$/.test(c));
+    if (match) {
+      const count = match.replace('grid-cols-', '');
+      const label = `Grid: ${count} Column${count === '1' ? '' : 's'}`;
+      section.setAttribute('data-aue-label', label);
+    }
+  });
+}
+
+function attachEventListners(main) {
   [
     'aue:content-patch',
     'aue:content-update',
@@ -107,13 +187,40 @@ function attachEventListeners(main) {
     'aue:content-copy',
   ].forEach((eventType) => main?.addEventListener(eventType, async (event) => {
     event.stopPropagation();
-    promiseChanges$ = applyChanges(event);
-    const applied = await promiseChanges$;
+    const applied = await applyChanges(event);
     if (!applied) window.location.reload();
+    showGridColumnLabel(main);
   }));
+
+  main?.addEventListener('aue:ui-select', handleSelection);
 }
 
-attachEventListeners(document.querySelector('main'));
+// Start Load brand level CSS resources
+const brandCode = [...document.head.querySelectorAll('meta[name="brand"]')]
+  .map((m) => m.content)
+  .join(', ');
+const themeCode = [...document.head.querySelectorAll('meta[name="theme"]')]
+  .map((m) => m.content)
+  .join(', ');
+const brandPath = `${brandCode !== '' ? `${brandCode}/` : ''}`;
+const themePath = `${themeCode !== '' ? `themes/${themeCode}/` : ''}`;
+// load tokens and styles
+const stylesheets = [
+  `/styles/${brandPath}${themePath}tokens.css`,
+  `/styles/${brandPath}${themePath}styles.css`,
+];
+stylesheets.forEach((stylesheet) => {
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = stylesheet;
+  link.type = 'text/css';
+  document.head.appendChild(link);
+});
+// End Load brand level CSS resources
+
+const main = document.querySelector('main');
+attachEventListners(main);
+showGridColumnLabel(main);
 
 // decorate rich text
 // this has to happen after decorateMain(), and everythime decorateBlocks() is called
