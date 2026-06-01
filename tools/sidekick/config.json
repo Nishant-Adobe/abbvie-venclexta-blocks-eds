@@ -1,5 +1,15 @@
+
+
 {
-  "project": "AEM XWalk Boilerplate",
-  "editUrlLabel": "AEM Editor",
-  "editUrlPattern": "{{contentSourceUrl}}{{pathname}}?cmd=open"
+  "project": "Venclexta",
+  "plugins": [
+    {
+      "id": "library",
+      "title": "Sidekick Library",
+      "environments": [
+        "edit"
+      ],
+      "url": "/tools/sidekick/library.html"
+    }
+  ]
 }
